@@ -57,3 +57,8 @@ func (es *EthSpy) Stop() {
 	// TODO : Clean up any left of threads or processes
 
 }
+
+// NewEthSpy : Creates a new instance of an EthSpy struct
+func NewEthSpy() (*EthSpy, error) {
+
+}
