@@ -3,13 +3,15 @@ package main
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"net"
 	gethCrypto "github.com/ethereum/go-ethereum/crypto"
 	node "github.com/ethereum/go-ethereum/node"
 	params "github.com/ethereum/go-ethereum/params"
 	//eth "github.com/ethereum/go-ethereum/eth"
-	//p2p "github.com/ethereum/go-ethereum/p2p"
-	eth "github.com/ethereum/go-ethereum/eth"
+	p2p "github.com/ethereum/go-ethereum/p2p"
+	//eth "github.com/ethereum/go-ethereum/eth"
 	enode "github.com/ethereum/go-ethereum/p2p/enode"
+	discover "github.com/ethereum/go-ethereum/p2p/discover"
 	utils "github.com/ethereum/go-ethereum/cmd/utils"
 	
 )
@@ -26,43 +28,42 @@ type EthSpy struct {
 // Start : Starts an instance of the ETHSpy client
 // TODO : Implement Start
 func (es *EthSpy) Start() error {
-	// TODO: Connect to a specific node or run peer discovery protocol
-
-	// TODO: If connected to a specific node, request nodes in its RLPx DHT 
-	// and recursively get those nodes's DHTs as well
-
-	fmt.Println("Starting ETHspy Server...")
-	//err := es.server.Start()
-	
 
 	utils.StartNode(es.node)
-	//if err != nil {
-	//	return err
-	//}
 
-	fmt.Println("NodeInfo: ", es.node.Server().NodeInfo())
-	fmt.Println("NodeDB: ", es.node.Config().NodeDB())
-	es.node.Wait()
+	fmt.Println("Starting ETHspy Server...")
+	server := es.node.Server()
+	//fmt.Println("server listen addr: %v", server.Config.ListenAddr)
+	
+	addr, err := net.ResolveUDPAddr("udp", server.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("Cannot resolved UDP address: %v", err)
+	}
+	
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return fmt.Errorf("Cannot listen at given address: %v", err)
+	}
+	
+	var unhandled chan discover.ReadPacket
+	discoverConfig := discover.Config{
+		PrivateKey : server.PrivateKey,
+		NetRestrict : server.NetRestrict,
+		Bootnodes : server.BootstrapNodes,
+		Unhandled : unhandled,
+		Log : server.Config.Logger,
+	}
+	ntab, err := discover.ListenUDP(conn, server.LocalNode(), discoverConfig)
+	if err != nil {
+		return fmt.Errorf("Cannot listen for discovery connections: %v", err)
+	}
+	
+	nodeIterator := ntab.RandomNodes()
+	for nodeIterator.Next() {
+		fmt.Println("node: %v", nodeIterator.Node())
+	}
 
 	return nil
-
-	// TODO: Store discovered nodes 
-
-	// TODO: Connect to discovered nodes using the RLPx handshake
-	
-	// TODO: Ensure that the minimum is done to keep connections alive
-	// For our purposes, we need to only consider transaction exchanges (later we can also consider block propagation)
-	// Things that may get us disconnected:
-	//     - Sending protocol messages that are larger than the limits
-	//     - Propagating invalid transactions
-	//     - Propagating empty transactions
-
-	// TODO: Upon connecting to these nodes, listen for any incoming transactions
-	// When listening for transactions, record the following information:
-	//     - IP address of the node
-	//     - Timestamp of when the transaction was received
-	//     - Transaction Hash of the transaction
-
 }
 
 // discoveryHandler : Handles discovering nodes on the network
@@ -85,7 +86,7 @@ func (es *EthSpy) Stop() {
 }
 
 // NewEthSpy : Creates a new instance of an EthSpy struct
-func NewEthSpy(maxPeers int, maxPendingPeers int) (*EthSpy, error) {
+func NewEthSpy(maxPeers int, maxPendingPeers int, listeningAddr string) (*EthSpy, error) {
 
 	ethspy := &EthSpy{}
 	privateKey, err := gethCrypto.GenerateKey()
@@ -118,12 +119,15 @@ func NewEthSpy(maxPeers int, maxPendingPeers int) (*EthSpy, error) {
 	nodeConfig.P2P.StaticNodes = nodes
 	nodeConfig.P2P.TrustedNodes = nodes
 	nodeConfig.P2P.BootstrapNodes = nodes
+	nodeConfig.P2P.Protocols = []p2p.Protocol{pingProtocol, pongProtocol}
+	nodeConfig.P2P.EnableMsgEvents = true
+	nodeConfig.P2P.ListenAddr = listeningAddr
 	node, err := node.New(&nodeConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	utils.RegisterEthService(node, &eth.DefaultConfig)
+	//utils.RegisterEthService(node, &eth.DefaultConfig)
 
 	ethspy.privateKey = privateKey
 	//ethspy.server = server
